@@ -23,8 +23,11 @@ TELEGRAM_CHAT_ID=123456789
 ## 3. 먼저 한 번 테스트 (알림 안 보내고 화면에만)
 
 ```bash
-python3 naver-alert/monitor.py --dry-run --no-state --limit-dongs 2
+python3 naver-alert/monitor.py --dry-run --no-state --report
 ```
+
+끝에 가격 낮은 순으로 요약표가 나온다. 빨리 한번 보려면 `--limit-dongs 2`를 붙여
+구마다 동 2개만 본다.
 
 - 매물이 출력되면 성공.
 - `[중단] 네이버 부동산에 접속하지 못했습니다` 가 나오면 네트워크가 막힌 것.
@@ -79,5 +82,6 @@ Register-ScheduledTask -TaskName "naver-alert" -Action $action -Trigger $trigger
 | `districts` | 지역 (구 이름: 법정동코드) |
 | `maxDeposit` | 보증금 상한 (만원) |
 | `maxMonthlyRent` | 월세 상한 (만원) |
-| `moveInBy` | 이 날짜까지 입주 가능한 매물만 |
+| `moveInFrom` / `moveInTo` | 희망 입주 기간 |
+| `moveInStrict` | `true`면 기간 안에 정확히 들어오는 매물만 |
 | `requireResidentRegistration` | 전입신고 조건 사용 여부 |

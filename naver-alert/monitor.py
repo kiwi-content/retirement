@@ -2,10 +2,10 @@
 """네이버 부동산 오피스텔 월세 매물 모니터 + 텔레그램 알림.
 
 조건(config.json):
-  - 지역: 송파/마포/광진/은평/강서구
+  - 지역: 용산/강남/서초/송파/마포/강서/은평/중/종로구
   - 오피스텔(OPST), 월세(B2)
   - 보증금 <= 3000만, 월세 <= 50만
-  - 입주가능일 <= 2026-11-20 (또는 즉시입주/협의)
+  - 입주가능일 2026-11-15 ~ 2026-11-20 (moveInStrict=false면 11-20 이전 전부 허용)
   - 전입신고 가능
 
 목록 API로 1차 하드 필터를 걸고, 매물 상세에서 입주일/전입신고를 2차로 본다.
@@ -202,8 +202,28 @@ def fetch_detail(session: requests.Session, atcl_no: str) -> dict:
 OK, UNKNOWN, NO = "ok", "unknown", "no"
 
 
-def check_move_in(info: dict, move_in_by: dt.date) -> tuple[str, str]:
-    """입주가능일이 희망 이사날짜(이하)를 만족하는지."""
+def check_move_in(
+    info: dict, win_from: dt.date, win_to: dt.date, strict: bool
+) -> tuple[str, str]:
+    """입주가능일이 희망 기간을 만족하는지.
+
+    strict=False(기본): win_to 이전이면 통과. 먼저 비는 집도 그 기간에 들어갈 수 있으므로.
+    strict=True: win_from~win_to 안에 들어야 통과.
+    """
+
+    def judge(d: dt.date) -> str:
+        if d > win_to:
+            return NO
+        if strict and d < win_from:
+            return NO
+        return OK
+
+    def label(d: dt.date) -> str:
+        text = d.strftime("%Y-%m-%d")
+        if d < win_from:
+            return f"{text} (희망일보다 빠름)"
+        return text
+
     ymd = info.get("move_in_ymd")
     if ymd:
         try:
@@ -211,12 +231,9 @@ def check_move_in(info: dict, move_in_by: dt.date) -> tuple[str, str]:
         except ValueError:
             d = None
         if d:
-            label = d.strftime("%Y-%m-%d")
-            return (OK if d <= move_in_by else NO), label
+            return judge(d), label(d)
 
-    blob = " ".join(
-        str(info.get(k, "")) for k in ("move_in_type", "move_in_text")
-    )
+    blob = " ".join(str(info.get(k, "")) for k in ("move_in_type", "move_in_text"))
     if not blob.strip():
         return UNKNOWN, "확인필요"
     if any(k in blob for k in ("즉시", "협의", "면담")):
@@ -232,7 +249,7 @@ def check_move_in(info: dict, move_in_by: dt.date) -> tuple[str, str]:
             d = dt.date(year, month, day)
         except ValueError:
             return UNKNOWN, blob.strip()
-        return (OK if d <= move_in_by else NO), d.strftime("%Y-%m-%d")
+        return judge(d), label(d)
     return UNKNOWN, blob.strip()
 
 
@@ -381,15 +398,54 @@ def send_telegram(token: str, chat_id: str, text: str) -> bool:
 # ---------------------------------------------------------------- main
 
 
+def print_report(hits: list[dict]):
+    """사람이 눈으로 훑을 수 있는 요약표. 보증금+월세 환산 오름차순."""
+    if not hits:
+        log("\n요약: 조건에 맞는 매물 0건")
+        return
+    rows = sorted(
+        hits,
+        key=lambda h: (
+            to_manwon(h["article"].get("rentPrc")) or 0,
+            to_manwon(h["article"].get("prc")) or 0,
+        ),
+    )
+    log("")
+    log("=" * 104)
+    log(
+        f"{'지역':<12}{'단지명':<22}{'보증금':>7}{'월세':>6}"
+        f"{'전용㎡':>8}{'층':>8}  {'입주가능':<22}{'전입':<8}"
+    )
+    log("=" * 104)
+    for h in rows:
+        a = h["article"]
+        name = (a.get("atclNm") or "-")[:20]
+        log(
+            f"{(h['gu'] + ' ' + h['dong'])[:11]:<12}{name:<22}"
+            f"{to_manwon(a.get('prc')) or 0:>7,}{to_manwon(a.get('rentPrc')) or 0:>6,}"
+            f"{str(a.get('spc2') or a.get('spc1') or '-'):>8}{str(a.get('flrInfo') or '-'):>8}"
+            f"  {MARK[h['move_status']]} {h['move_label'][:19]:<20}"
+            f"{MARK[h['jeonip_status']]} {h['jeonip_label'][:6]}"
+        )
+    log("=" * 104)
+    log(f"총 {len(rows)}건   ✅확인됨  ❓상세에서 못 읽음(직접 확인 필요)")
+    log("매물 링크는 위쪽 상세 출력에 있습니다.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="텔레그램 전송 없이 출력만")
     ap.add_argument("--no-state", action="store_true", help="중복 기록 무시/저장 안 함")
     ap.add_argument("--limit-dongs", type=int, default=0, help="동 개수 제한(디버그)")
+    ap.add_argument(
+        "--report", action="store_true", help="끝에 한 줄 요약표 출력(가격 낮은 순)"
+    )
     args = ap.parse_args()
 
     cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    move_in_by = dt.datetime.strptime(cfg["moveInBy"], "%Y-%m-%d").date()
+    win_from = dt.datetime.strptime(cfg["moveInFrom"], "%Y-%m-%d").date()
+    win_to = dt.datetime.strptime(cfg["moveInTo"], "%Y-%m-%d").date()
+    strict = bool(cfg.get("moveInStrict", False))
     delay = float(cfg.get("requestDelaySec", 0.4))
 
     load_env_file()
@@ -465,7 +521,9 @@ def main() -> int:
             m = RE_JEONIP.search(blob)
             if m:
                 info["jeonip"] = m.group(1)
-        c["move_status"], c["move_label"] = check_move_in(info, move_in_by)
+        c["move_status"], c["move_label"] = check_move_in(
+            info, win_from, win_to, strict
+        )
         c["jeonip_status"], c["jeonip_label"] = check_jeonip(
             info, cfg.get("requireResidentRegistration", True)
         )
@@ -490,6 +548,9 @@ def main() -> int:
             log(re.sub(r"<[^>]+>", "", text))
         seen_articles[h["no"]] = now_iso
         seen_fps[h["fp"]] = now_iso
+
+    if args.report:
+        print_report(hits)
 
     if not args.no_state:
         save_state(state, int(cfg.get("seenRetentionDays", 30)))

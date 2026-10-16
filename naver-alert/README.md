@@ -6,13 +6,20 @@
 
 | 항목 | 값 |
 |---|---|
-| 지역 | 송파구, 마포구, 광진구, 은평구, 강서구 |
+| 지역 | 용산, 강남, 서초, 송파, 마포, 강서, 은평, 중, 종로구 |
 | 종류 | 오피스텔 |
 | 거래 | 월세 |
 | 보증금 | 3,000만원 이하 |
 | 월세 | 50만원 이하 |
-| 입주가능일 | 2026-11-20 이전 (그날 이사 가능해야 하므로 "이하") |
+| 입주가능일 | 2026-11-15 ~ 2026-11-20 |
 | 전입신고 | 가능 |
+
+입주일은 기본적으로 **11-20 이전이면 통과**시킨다. 먼저 비는 집도 그 기간에 들어갈 수
+있기 때문이다. 희망 기간 안에 정확히 들어오는 매물만 보려면 `config.json`의
+`moveInStrict`를 `true`로 바꾼다.
+
+> 강남·서초는 보증금 3,000만 / 월세 50만 조건에 맞는 오피스텔이 거의 없을 것이다.
+> 0건이 나오더라도 오류가 아니다.
 
 ## 설정 (1회)
 
@@ -22,6 +29,21 @@
 3. GitHub 저장소 → Settings → Secrets and variables → Actions → New secret
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
+
+## 실행
+
+```bash
+pip3 install requests
+
+# 지금 당장 조건 맞는 매물 보기 (알림 안 보냄)
+python3 naver-alert/monitor.py --dry-run --no-state --report
+
+# 실제 알림 보내기 (.env 또는 환경변수에 토큰 필요)
+python3 naver-alert/monitor.py
+```
+
+**네이버는 해외 데이터센터 IP를 차단한다.** 국내 네트워크에서 돌려야 한다.
+자동 실행 설정은 [SETUP_LOCAL.md](SETUP_LOCAL.md) 참고.
 
 ## 동작 방식
 
@@ -38,4 +60,5 @@
 ## 수동 실행 / 조건 변경
 
 - Actions → `naver-realestate-alert` → Run workflow (기본 dry-run)
-- 조건은 `config.json`만 고치면 된다. `moveInBy`, `maxDeposit`, `maxMonthlyRent`, `districts`.
+- 조건은 `config.json`만 고치면 된다. `moveInFrom`, `moveInTo`, `moveInStrict`,
+  `maxDeposit`, `maxMonthlyRent`, `districts`.
