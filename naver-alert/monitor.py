@@ -90,31 +90,65 @@ def get_json(session: requests.Session, url: str, *, params=None, tries=3):
 # ---------------------------------------------------------------- naver
 
 
-def fetch_dongs(session: requests.Session, gu_code: str) -> list[dict]:
-    """구 코드로 동 목록(코드/이름/좌표)을 받는다."""
-    data = get_json(
-        session, f"{BASE}/map/getRegionList", params={"cortarNo": gu_code}
-    )
-    if not data:
-        return []
+LAT_KEYS = ("lat", "mapYCrdn", "centerLat", "y")
+LON_KEYS = ("lon", "mapXCrdn", "centerLon", "x")
+
+
+def pick_float(item: dict, keys) -> float | None:
+    for k in keys:
+        v = item.get(k)
+        if v in (None, ""):
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def fetch_dongs(session: requests.Session, gu_code: str, debug=False) -> tuple[list[dict], bool]:
+    """구 코드로 동 목록(코드/이름/좌표)을 받는다.
+
+    반환: (동 목록, 네이버가 응답을 줬는지)
+    좌표/이름 키는 응답 스펙이 바뀌어도 버티도록 후보를 돌면서 찾는다.
+    """
+    data = get_json(session, f"{BASE}/map/getRegionList", params={"cortarNo": gu_code})
+    if data is None:
+        return [], False
+
+    raw = (data.get("result") or {}).get("list")
+    if raw is None:
+        raw = data.get("list") or data.get("regionList") or []
+    if debug:
+        log(f"  [debug] getRegionList 최상위 키={list(data.keys())} 항목수={len(raw)}")
+        if raw:
+            log(f"  [debug] 첫 항목={json.dumps(raw[0], ensure_ascii=False)}")
+
     out = []
-    for item in (data.get("result") or {}).get("list") or []:
-        lat, lon = item.get("lat"), item.get("lon")
-        if lat is None or lon is None:
+    for item in raw:
+        lat = pick_float(item, LAT_KEYS)
+        lon = pick_float(item, LON_KEYS)
+        code = item.get("cortarNo") or item.get("cortarNumber")
+        if lat is None or lon is None or not code:
             continue
         out.append(
             {
-                "code": str(item.get("cortarNo")),
-                "name": item.get("cortarNm") or "",
-                "lat": float(lat),
-                "lon": float(lon),
+                "code": str(code),
+                "name": item.get("cortarNm") or item.get("cortarName") or "",
+                "lat": lat,
+                "lon": lon,
             }
         )
-    return out
+    if raw and not out:
+        log(
+            f"  [warn] 동 {len(raw)}개를 받았지만 좌표를 못 읽었습니다. "
+            f"키={list(raw[0].keys())}"
+        )
+    return out, True
 
 
 def fetch_articles(
-    session: requests.Session, dong: dict, cfg: dict, delay: float
+    session: requests.Session, dong: dict, cfg: dict, delay: float, debug=False
 ) -> list[dict]:
     """한 동의 매물 목록을 페이지 끝까지 긁는다."""
     lat, lon = dong["lat"], dong["lon"]
@@ -142,6 +176,10 @@ def fetch_articles(
         if not data:
             break
         body = data.get("body") or []
+        if debug and page == 1:
+            log(f"  [debug] articleList 최상위 키={list(data.keys())} body={len(body)}")
+            if body:
+                log(f"  [debug] 첫 매물={json.dumps(body[0], ensure_ascii=False)}")
         articles.extend(body)
         if not data.get("more") or not body:
             break
@@ -440,6 +478,7 @@ def main() -> int:
     ap.add_argument(
         "--report", action="store_true", help="끝에 한 줄 요약표 출력(가격 낮은 순)"
     )
+    ap.add_argument("--debug", action="store_true", help="네이버 원본 응답 구조 출력")
     args = ap.parse_args()
 
     cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -465,17 +504,20 @@ def main() -> int:
     total_listed = 0
     reachable = False
 
+    debug_once = args.debug
     for gu_name, gu_code in cfg["districts"].items():
-        dongs = fetch_dongs(session, gu_code)
+        dongs, answered = fetch_dongs(session, gu_code, debug=debug_once)
+        reachable = reachable or answered
         if not dongs:
-            log(f"[{gu_name}] 동 목록 0개 — 네이버 응답 없음")
+            why = "네이버 응답 없음" if not answered else "응답은 받았으나 파싱 실패"
+            log(f"[{gu_name}] 동 목록 0개 — {why}")
             continue
-        reachable = True
         if args.limit_dongs:
             dongs = dongs[: args.limit_dongs]
         log(f"[{gu_name}] 동 {len(dongs)}개")
         for dong in dongs:
-            arts = fetch_articles(session, dong, cfg, delay)
+            arts = fetch_articles(session, dong, cfg, delay, debug=debug_once)
+            debug_once = False
             total_listed += len(arts)
             hard = [a for a in arts if passes_hard(a, cfg)]
             if hard:
