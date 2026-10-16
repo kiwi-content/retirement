@@ -42,6 +42,19 @@ def log(*args):
     print(*args, flush=True)
 
 
+def load_env_file():
+    """naver-alert/.env 가 있으면 환경변수로 올린다(로컬 실행용)."""
+    path = ROOT / ".env"
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 # ---------------------------------------------------------------- http
 
 
@@ -379,6 +392,7 @@ def main() -> int:
     move_in_by = dt.datetime.strptime(cfg["moveInBy"], "%Y-%m-%d").date()
     delay = float(cfg.get("requestDelaySec", 0.4))
 
+    load_env_file()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     notify = bool(token and chat_id) and not args.dry_run
@@ -393,12 +407,14 @@ def main() -> int:
 
     candidates: list[dict] = []
     total_listed = 0
+    reachable = False
 
     for gu_name, gu_code in cfg["districts"].items():
         dongs = fetch_dongs(session, gu_code)
         if not dongs:
-            log(f"[{gu_name}] 동 목록 0개 — API 응답 확인 필요")
+            log(f"[{gu_name}] 동 목록 0개 — 네이버 응답 없음")
             continue
+        reachable = True
         if args.limit_dongs:
             dongs = dongs[: args.limit_dongs]
         log(f"[{gu_name}] 동 {len(dongs)}개")
@@ -411,6 +427,13 @@ def main() -> int:
             for a in hard:
                 candidates.append({"article": a, "gu": gu_name, "dong": dong["name"]})
             time.sleep(delay)
+
+    if not reachable:
+        log(
+            "[중단] 네이버 부동산에 접속하지 못했습니다. 모든 구에서 응답이 없습니다.\n"
+            "       해외 IP(데이터센터/VPS/CI)에서는 차단됩니다. 국내 네트워크에서 실행하세요."
+        )
+        return 2
 
     log(f"[집계] 전체 {total_listed}건 / 1차 통과 {len(candidates)}건")
 
