@@ -90,6 +90,22 @@ def get_json(session: requests.Session, url: str, *, params=None, tries=3):
 # ---------------------------------------------------------------- naver
 
 
+class CIDict(dict):
+    """네이버가 키 대소문자를 바꿔서 돌려주는 경우가 있어 무관하게 읽는다.
+
+    실제로 getRegionList 는 CortarNo/MapXCrdn 처럼 첫 글자를 대문자로 준다.
+    """
+
+    def __init__(self, data: dict):
+        super().__init__(data)
+        self._lower = {str(k).lower(): v for k, v in data.items()}
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        return self._lower.get(str(key).lower(), default)
+
+
 LAT_KEYS = ("lat", "mapYCrdn", "centerLat", "y")
 LON_KEYS = ("lon", "mapXCrdn", "centerLon", "x")
 
@@ -126,6 +142,7 @@ def fetch_dongs(session: requests.Session, gu_code: str, debug=False) -> tuple[l
 
     out = []
     for item in raw:
+        item = CIDict(item)
         lat = pick_float(item, LAT_KEYS)
         lon = pick_float(item, LON_KEYS)
         code = item.get("cortarNo") or item.get("cortarNumber")
@@ -175,7 +192,8 @@ def fetch_articles(
         data = get_json(session, f"{BASE}/cluster/ajax/articleList", params=params)
         if not data:
             break
-        body = data.get("body") or []
+        data = CIDict(data)
+        body = [CIDict(a) for a in (data.get("body") or [])]
         if debug and page == 1:
             log(f"  [debug] articleList 최상위 키={list(data.keys())} body={len(body)}")
             if body:
@@ -192,8 +210,8 @@ DETAIL_URLS = [
     "https://new.land.naver.com/api/articles/{no}?complexNo=",
 ]
 
-RE_MOVE_YMD = re.compile(r'"moveInPossibleYmd"\s*:\s*"?(\d{8})')
-RE_MOVE_TYPE = re.compile(r'"moveInTypeName"\s*:\s*"([^"]{1,30})"')
+RE_MOVE_YMD = re.compile(r'"moveInPossibleYmd"\s*:\s*"?(\d{8})', re.I)
+RE_MOVE_TYPE = re.compile(r'"moveInTypeName"\s*:\s*"([^"]{1,30})"', re.I)
 RE_MOVE_TEXT = re.compile(r"입주[가-힣]{0,4}일?[^0-9가-힣]{0,12}([0-9]{2,4}[.\-/년][^<\",]{0,18})")
 RE_JEONIP = re.compile(r"전입(?:신고)?\s*(?:[:：]|이|가)?\s*(가능|불가|불가능|안됨|어려움|협의)")
 
