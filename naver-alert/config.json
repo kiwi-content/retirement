@@ -1,0 +1,19 @@
+{
+  "districts": {
+    "송파구": "1171000000",
+    "마포구": "1144000000",
+    "광진구": "1121500000",
+    "은평구": "1138000000",
+    "강서구": "1150000000"
+  },
+  "realEstateType": "OPST",
+  "tradeType": "B2",
+  "maxDeposit": 3000,
+  "maxMonthlyRent": 50,
+  "moveInBy": "2026-11-20",
+  "requireResidentRegistration": true,
+  "fetchDetail": true,
+  "detailFetchLimit": 40,
+  "requestDelaySec": 0.4,
+  "seenRetentionDays": 30
+}
